@@ -1,15 +1,18 @@
 (ns clj-s3-tools.list
   (:require [amazonica.aws.s3 :as s3]))
 
-(defn list-object-summaries [bucket-name prefix & [marker]]
-  (let [result (s3/list-objects
-                {:bucket-name bucket-name
-                 :prefix prefix
-                 :marker marker})]
-    (concat
-     (:object-summaries result)
+(defn- list-all [opts]
+  (let [result (s3/list-objects opts)]
+    (cons
+     result
      (when-let [next-marker (:next-marker result)]
-       (lazy-seq (list-object-summaries
-                  bucket-name
-                  prefix
-                  next-marker))))))
+       (lazy-seq (list-all
+                  (assoc opts :marker next-marker)))))))
+
+(defn list-object-summaries
+  ([bucket-name prefix]
+   (mapcat
+    :object-summaries
+    (list-all
+     {:bucket-name bucket-name
+      :prefix prefix}))))
