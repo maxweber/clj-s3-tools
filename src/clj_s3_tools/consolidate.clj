@@ -19,55 +19,79 @@
      tmp-file)
     (.delete tmp-file)))
 
-(defn consolidate-plan [target-size object-summaries]
-  ;; TODO: consolidate-plan only handles a bunch of small files (in
+(defn group-objects [target-size object-summaries]
+  ;; TODO: group-objects only handles a bunch of small files (in
   ;;       compairison to the target-size) appropriately. Also it
   ;;       should adhere to S3 file size limits.
   (let [result (reduce
-                (fn [{:keys [current-size current-bucket] :as state} object-summary]
+                (fn [{:keys [current-size current-group] :as state} object-summary]
                   (if (< current-size target-size)
                     (assoc
                      state
-                     :current-bucket (conj current-bucket object-summary)
+                     :current-group (conj current-group object-summary)
                      :current-size (+ current-size (:size object-summary)))
                     (assoc
                      state
-                     :current-bucket [object-summary]
+                     :current-group [object-summary]
                      :current-size (:size object-summary)
-                     :buckets (conj (:buckets state) current-bucket))))
+                     :groups (conj (:groups state) current-group))))
                 {:current-size 0
-                 :current-bucket []
-                 :buckets []}
+                 :current-group []
+                 :groups []}
                 object-summaries)]
-    (conj (:buckets result) (:current-bucket result))))
+    (conj (:groups result) (:current-group result))))
 
 (def default-consolidated-file-size (* 1024 1024 128))
 
 (def default-dest-file-name-fn (fn [part-number] (str part-number)))
 
-(defn consolidate-files
+(defn plan-consolidate-files
   [{:keys [dest-bucket dest-path object-summaries consolidated-file-size
            dest-file-name-fn]
     :or {consolidated-file-size default-consolidated-file-size
          dest-file-name-fn default-dest-file-name-fn}}]
   (e/ensure-ends-with-slash dest-path "dest-path")
-  (e/ensure-folder-is-empty dest-bucket dest-path)
-  (let [plan (consolidate-plan consolidated-file-size object-summaries)]
+  (let [groups (group-objects consolidated-file-size object-summaries)]
+    {:actions
+     (map-indexed
+      (fn [idx group]
+        {:group group
+         :dest-bucket dest-bucket
+         :dest-key (str dest-path (dest-file-name-fn idx))})
+      groups)}))
+
+(defn extract-folder-path [key]
+  (second (re-find #"(.*/)" key)))
+
+(defn- destinct-destinations [consolidate-files-plan]
+  (distinct
+   (map
+    (juxt :dest-bucket
+          (comp extract-folder-path :dest-key))
+    (:actions consolidate-files-plan))))
+
+(defn consolidate-files
+  [consolidate-files-plan & [{:keys [parallelism] :or {parallelism 10}}]]
+  (doseq [[dest-bucket dest-path] (destinct-destinations consolidate-files-plan)]
+    (e/ensure-folder-is-empty dest-bucket dest-path))
+  (let [actions (:actions consolidate-files-plan)]
     (io-map
-     10
-     (fn [[part-number object-summaries]]
+     parallelism
+     (fn [{:keys [dest-bucket dest-key group]}]
        (merge-files
         dest-bucket
-        (str dest-path (dest-file-name-fn part-number))
-        object-summaries))
-     (map vector (range) plan))
+        dest-key
+        group))
+     actions)
     true))
 
 (comment
   ;; example
-  (consolidate-files
-   {:dest-bucket "bucket"
-    :dest-path "consolidated/"
-    :object-summaries (clj-s3-tools.list/list-object-summaries
-                       "bucket"
-                       "results/")}))
+  (let [plan (plan-consolidate-files
+              {:dest-bucket "test"
+               :dest-path "consolidated/"
+               :object-summaries
+               (clj-s3-tools.list/list-object-summaries
+                "test"
+                "results/")})]
+    (consolidate-files plan)))
