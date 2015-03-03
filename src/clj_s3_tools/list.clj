@@ -1,6 +1,5 @@
 (ns clj-s3-tools.list
   (:require [amazonica.aws.s3 :as s3]
-            [clj-s3-tools.ensure :as e]
             [clj-s3-tools.path :as p]))
 
 (defn- list-all [opts]
@@ -22,7 +21,7 @@
 (defn list-sub-dirs
   "Lists all subdirectories of 'dir-path/' in the given S3 bucket."
   [bucket-name dir-path]
-  (e/ensure-ends-with-slash dir-path "dir-path")
+  {:pre [(.endsWith dir-path "/")]}
   (map
    p/last-dir
    (distinct
