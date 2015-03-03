@@ -1,8 +1,9 @@
-(ns clj-s3-tools.delete)
+(ns clj-s3-tools.delete
+  (:require [amazonica.aws.s3 :as s3]))
 
 (defn delete-objects
-  "Deletes all keys (S3 objects) in the given bucket. Returns a list
-  of deleted keys."
+  "Deletes all keys (S3 objects) in the given bucket. Returns a
+  sequence of deleted keys."
   [bucket-name keys]
   (doall
    (mapcat
